@@ -42,6 +42,7 @@ const fluxer: Side = {
   other: discord,
   avatar: (u, m, g) =>
     m?.avatar ? `${fx.media}/guilds/${g}/users/${u.id}/avatars/${m.avatar}.png` : u.avatar ? `${fx.media}/avatars/${u.id}/${u.avatar}.png` : undefined,
+  emoji: (id, animated) => `${fx.media}/emojis/${id}.${animated ? 'gif' : 'webp'}`,
   sticker: s => `${fx.media}/stickers/${s.id}.${s.animated ? 'gif' : 'webp'}`,
   jump: (g, c, m) => `${fx.webapp}/channels/${g}/${c}/${m}`,
 }

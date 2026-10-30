@@ -81,7 +81,7 @@ Both ways:
 
 - [ ] Text messages, posted by webhook with the author's name (tagged `(Discord)` or `(Fluxer)`) and avatar
 - [ ] Mentions turn into plain `**@name**`. Mentions of bridged channels become native channel mentions
-- [ ] Copied emojis show as real emojis on both sides. Other custom emojis turn into `:name:`
+- [ ] Copied emojis show as real emojis on both sides. Other custom emojis turn into `:name:`, or into an image when the message is only that emoji
 - [ ] Pins, including unpinning bridged copies
 - [ ] Replies: real replies on Fluxer. On Discord, an embed under the message shows `↩️` with the replied person's avatar, name, a snippet and a jump link. Replying to a bridged copy pings the original author natively
 - [ ] Edits and deletes of the original update the copy

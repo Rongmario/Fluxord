@@ -396,7 +396,12 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
   } else if (dst.name === 'discord' && m.type === 19 && m.referenced_message === null) context = { color: src.color, author: { name: '↩️ Original message was deleted' } }
 
   for (const [, a, name, id] of (m.content ?? '').matchAll(/<(a?):([\w-]+):(\d+)>/g)) await emojiTo(src, id, name, !!a, guild, dstRoot)
-  if (m.content) lines.push(convert(m.content, m.mentions, look))
+  const text = m.content ? convert(m.content, m.mentions, look) : ''
+
+  // A lone emoji that didn't resolve on the other side shows as its image, like it would on its own platform.
+  const lone = m.content?.trim().match(/^<(a?):([\w-]+):(\d+)>$/)
+  if (lone && text.trim() === `:${lone[2]}:`) embeds.push({ image: { url: src.emoji!(lone[3], !!lone[1]) } })
+  else if (text) lines.push(text)
 
   const attachments = [...(m.attachments ?? [])]
   const sourceEmbeds = [...(m.embeds ?? [])]
