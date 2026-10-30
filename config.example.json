@@ -1,0 +1,8 @@
+{
+  "db": "fluxord.sqlite",
+  "retentionDays": 7,
+  "discord": { "token": "" },
+  "fluxer": { "token": "", "instance": "https://fluxer.example.com" },
+  "servers": { "discord": "DISCORD_SERVER_ID", "fluxer": "FLUXER_COMMUNITY_ID" },
+  "bridges": []
+}

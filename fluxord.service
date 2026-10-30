@@ -1,0 +1,33 @@
+# Copy to /etc/systemd/system/fluxord.service, adjust User, WorkingDirectory and the bun path, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now fluxord
+#   journalctl -u fluxord -f
+
+[Unit]
+Description=Fluxord Discord <-> Fluxer bridge
+Wants=network-online.target
+After=network-online.target
+
+# A rejected token exits the bot. Stop retrying after 5 failures in 5 minutes instead of looping.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=fluxord
+WorkingDirectory=/opt/fluxord
+ExecStart=/usr/bin/bun src/main.ts
+Restart=on-failure
+RestartSec=10
+
+# Tokens can live here instead of config.json (DISCORD_TOKEN=..., FLUXER_TOKEN=...).
+#EnvironmentFile=/etc/fluxord.env
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/fluxord
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
