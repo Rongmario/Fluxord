@@ -467,7 +467,7 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
     const url = (own && dst.sticker(own)) || src.sticker(s)
     const copied = url && src.name === 'discord' && expressions.get(s.id) === guild && (await copy('stickers', s.id, s.name, url, dstRoot))
     if (copied) stickers.push(copied)
-    else embeds.push(url ? { image: { url }, footer: { text: s.name } } : { description: `Sticker: ${s.name}` })
+    else embeds.push(url ? { image: { url } } : { description: `Sticker: ${s.name}` })
   }
 
   let content = [mention, lines.join('\n')].filter(Boolean).join(' ')
