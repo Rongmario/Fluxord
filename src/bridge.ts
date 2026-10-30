@@ -38,6 +38,9 @@ const roles = new Map<string, string>()
 const perms = new Map<string, bigint>()
 const owners = new Map<string, string>()
 
+// Side + lowercase role name to role id in the bridged server, so role pings can find their namesake across.
+const serverRoles = new Map<string, string>()
+
 // Discord emoji/sticker id to its guild, so only the bridged guild's own expressions get copied to Fluxer.
 const expressions = new Map<string, string>()
 const serverEmojis = new Map<string, any>()
@@ -98,10 +101,14 @@ export function unbridge(s: Side, channel: string) {
   db.query('DELETE FROM link WHERE (side = ? AND root = ?) OR (side = ? AND root = ?)').run(s.name, l.root, s.other.name, l.hook)
 }
 
-// Owner, Administrator (1 << 3) or Manage Server (1 << 5).
-export const admin = (s: Side, m: any) =>
+// Owner, Administrator (1 << 3) or one of the given bits. Checks server-wide role permissions only.
+// ponytail: ignores channel overwrites, resolve them if a channel ever needs tighter rules than the server.
+const can = (s: Side, m: any, bits: bigint) =>
   owners.get(s.name + m.guild_id) === m.author.id ||
-  [m.guild_id, ...(m.member?.roles ?? [])].some(r => (perms.get(s.name + r) ?? 0n) & ((1n << 3n) | (1n << 5n)))
+  [m.guild_id, ...(m.member?.roles ?? [])].some(r => (perms.get(s.name + r) ?? 0n) & ((1n << 3n) | bits))
+
+// Manage Server (1 << 5).
+export const admin = (s: Side, m: any) => can(s, m, 1n << 5n)
 
 export function ingest(s: Side, t: string, d: any) {
   switch (t) {
@@ -114,6 +121,7 @@ export function ingest(s: Side, t: string, d: any) {
       for (const r of d.roles ?? []) {
         roles.set(s.name + r.id, r.name)
         perms.set(s.name + r.id, BigInt(r.permissions ?? 0))
+        if (guild === s.server && r.id !== guild) serverRoles.set(s.name + r.name.toLowerCase(), r.id)
       }
       if (s.name === 'discord') for (const e of [...(d.emojis ?? []), ...(d.stickers ?? [])]) expressions.set(e.id, d.id)
       if (s.name === 'discord' && guild === s.server) {
@@ -139,6 +147,7 @@ export function ingest(s: Side, t: string, d: any) {
     case 'GUILD_ROLE_UPDATE':
       roles.set(s.name + d.role.id, d.role.name)
       perms.set(s.name + d.role.id, BigInt(d.role.permissions ?? 0))
+      if (d.guild_id === s.server) serverRoles.set(s.name + d.role.name.toLowerCase(), d.role.id)
       return
     case 'MESSAGE_REACTION_ADD':
     case 'MESSAGE_REACTION_REMOVE':
@@ -248,12 +257,13 @@ async function channel(s: Side, id: string) {
   return c
 }
 
-const lookup = (s: Side): Look => ({
+const lookup = (s: Side, pings = false): Look => ({
   channel: id => {
     const l = link(s, id)
     return l ? `<#${l.other}>` : `#${channels.get(s.name + id)?.name ?? 'unknown-channel'}`
   },
   role: id => roles.get(s.name + id),
+  ping: id => (pings ? serverRoles.get(s.other.name + roles.get(s.name + id)?.toLowerCase()) : undefined),
   emoji: (id, name) => (s.name === 'fluxer' && serverEmoji(id, name)?.id) || mapped(s, id),
 
   // Fluxer text like :name: becomes the Discord server's emoji of that name.
@@ -375,7 +385,11 @@ const clean = ({ title, description, url, timestamp, color, fields, footer, imag
 
 async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
   const dst = src.other
-  const look = lookup(src)
+
+  // Authors with Mention Everyone (1 << 17) on their side ping @everyone, @here and same-named roles across.
+  // History fetched after downtime has no member, so those messages never ping.
+  const pings = !!m.member && can(src, m, 1n << 17n)
+  const look = lookup(src, pings)
   const lines: string[] = []
   const embeds: any[] = []
   const files: FileUp[] = []
@@ -496,7 +510,8 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
   // On Discord the reply context can only sit below the text, as the first embed.
   if (context && !reference) embeds.unshift(context)
   if (!content && !embeds.length && !files.length && !stickers.length) content = '-# (unsupported message)'
-  return { content, embeds: embeds.slice(0, 10), files, users, stickers, reference, context }
+  const roles = pings ? [...content.matchAll(/<@&(\d+)>/g)].map(x => x[1]) : []
+  return { content, embeds: embeds.slice(0, 10), files, users, roles, pings, stickers, reference, context }
 }
 
 function preview(text: string, lang: string) {
@@ -536,13 +551,13 @@ async function create(src: Side, m: any) {
     } else l = await mirror(src, c, p)
   }
 
-  const { content, embeds, files, users, stickers, reference, context } = await build(src, m, true, l.hook)
+  const { content, embeds, files, users, roles, pings, stickers, reference, context } = await build(src, m, true, l.hook)
   const body = {
     content,
     embeds,
     username: username(dst, m),
     avatar_url: src.avatar(m.author, m.member, c.guild_id),
-    allowed_mentions: { parse: [], users, replied_user: users.length > 0 },
+    allowed_mentions: { parse: pings ? ['everyone'] : [], users, roles, replied_user: users.length > 0 },
     thread_name: threadName,
     sticker_ids: stickers.length ? stickers : undefined,
     message_reference: reference,

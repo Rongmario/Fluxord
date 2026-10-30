@@ -82,6 +82,7 @@ Both ways:
 
 - [ ] Text messages, posted by webhook with the author's name (tagged `(Discord)` or `(Fluxer)`) and avatar
 - [ ] Mentions turn into plain `**@name**`. Mentions of bridged channels become native channel mentions
+- [ ] Role pings, `@everyone` and `@here` ping across only when the author has Mention Everyone (or is an admin) in their server. Roles ping the role with the same name on the other side. Messages relayed after downtime never ping
 - [ ] Copied emojis show as real emojis on both sides. Other custom emojis turn into `:name:`, or into an image when the message is only that emoji
 - [ ] Pins, including unpinning bridged copies
 - [ ] Replies: real replies on Fluxer. On Discord, an embed under the message shows `↩️` with the replied person's avatar, name, a snippet and a jump link. Replying to a bridged copy pings the original author natively
