@@ -1,10 +1,13 @@
-import { adopt, admin, api, bridge, channels, link, transient, unbridge, type Side } from './bridge'
+import { serving } from './attachments'
+import { adopt, admin, api, bridge, channels, link, relink, transient, unbridge, type Side } from './bridge'
 import { HttpError } from './net'
 import { join } from './render'
 
-export const COMMAND = /^!fluxord\s+(help|channels|mirror|unmirror|link)\b/i
+export const COMMAND = /^!fluxord\s+(help|channels|mirror|unmirror|link|refresh|convert)\b/i
 
 const MIRRORABLE = new Set([0, 5, 15, 16])
+const FORUMS: Record<string, number> = { forum: 15, media: 16 }
+const threadOnly = (c: any) => c.type === 15 || c.type === 16
 const VIEW = 1n << 10n
 
 // VIEW_CHANNEL, SEND_MESSAGES, ADD_REACTIONS, READ_MESSAGE_HISTORY, MANAGE_WEBHOOKS, so the bot keeps access to private channels it creates.
@@ -15,6 +18,8 @@ const HELP = [
   '`!fluxord mirror 1 3 5-8` mirrors those channels to the other side. `all` mirrors every channel except 🔒 private ones',
   '`!fluxord unmirror 3` stops mirroring. Both channels are kept',
   '`!fluxord link 3 <channel id>` bridges channel 3 (or a #channel) with any channel on the other side, whatever its name',
+  '`!fluxord refresh` points old Discord image links in Fluxer copies at the stable links',
+  '`!fluxord convert 3 media` (or `forum`) replaces forum or media channel 3 with a new one of that type, keeping the bridge',
 ]
 
 const norm = (name: string) => name.toLowerCase().replace(/\s+/g, '-')
@@ -27,12 +32,20 @@ export async function command(s: Side, m: any) {
 
   const [, sub, ...args] = m.content.trim().toLowerCase().split(/\s+/)
   if (sub === 'help') return say('Fluxord', HELP, 'Needs Manage Server')
+  if (sub === 'refresh') {
+    if (!serving()) return say("Couldn't refresh", ['Set up `attachments` in config.json first, so there are stable links to point at.'])
+    return say('Refreshed', [`Updated ${await relink()} bridged messages on Fluxer.`])
+  }
   const { list, cats } = await scrape(s)
   if (sub === 'channels') return say('Channels', list.length ? overview(s, list, cats) : ['No channels found.'], 'Mirror with !fluxord mirror <numbers>')
 
   if (sub === 'link') {
     const out = await pair(s, args, list)
-    return out ? say('Linked', [out]) : say("Couldn't link", HELP.slice(-1))
+    return out ? say('Linked', [out]) : say("Couldn't link", HELP.filter(h => h.startsWith('`!fluxord link')))
+  }
+  if (sub === 'convert') {
+    const out = await convert(s, args, list)
+    return out ? say('Converted', [out], 'The old channel is kept, renamed with -old') : say("Couldn't convert", HELP.filter(h => h.startsWith('`!fluxord convert')))
   }
 
   const all = args[0] === 'all'
@@ -105,6 +118,9 @@ async function mirror(s: Side, picks: any[], cats: Map<string, any>) {
       let t = theirs.find(
         x =>
           MIRRORABLE.has(x.type) &&
+
+          // Text and announcement channels can stand in for each other. Forum and media only match their own type.
+          (threadOnly(x) || threadOnly(c) ? x.type === c.type : true) &&
           norm(x.name) === norm(c.name) &&
           (x.parent_id ?? null) === (parent?.id ?? null) &&
           hidden(x, dst.server) === priv &&
@@ -144,6 +160,40 @@ async function pair(s: Side, [mine, theirs]: string[], list: any[]) {
     if (transient(e)) throw e
     return `<#${c.id}> failed: ${e instanceof HttpError ? JSON.stringify(e.body) : e}`
   }
+}
+
+// Neither platform changes a forum's type in place, so a new channel takes its place and the bridge moves over.
+// Threads can't move between channels, so they stay in the old one. Bridged threads get their first post copied again.
+async function convert(s: Side, [n, to]: string[], list: any[]) {
+  const c = list[Number(n) - 1]
+  const type = FORUMS[to]
+  if (!c || !type || !threadOnly(c) || c.type === type) return
+  const t = await api(s, 'POST', `/guilds/${s.server}/channels`, {
+    name: c.name,
+    type,
+    topic: c.topic || undefined,
+    nsfw: c.nsfw,
+    parent_id: c.parent_id ?? undefined,
+    position: c.position,
+    permission_overwrites: c.permission_overwrites,
+    rate_limit_per_user: c.rate_limit_per_user,
+    default_thread_rate_limit_per_user: c.default_thread_rate_limit_per_user,
+    available_tags: c.available_tags?.map(({ id, ...tag }: any) => tag),
+    default_reaction_emoji: c.default_reaction_emoji ?? undefined,
+    default_sort_order: c.default_sort_order ?? undefined,
+  })
+  channels.set(s.name + t.id, { ...t, guild_id: s.server })
+
+  // Renaming is cosmetic, so a platform refusing it shouldn't stop the conversion.
+  await api(s, 'PATCH', `/channels/${c.id}`, { type: c.type, name: `${c.name}-old` }).catch(e => {
+    if (transient(e)) throw e
+  })
+  const l = link(s, c.id)
+  if (!l) return `#${c.name} is now a ${to} channel: <#${t.id}>`
+  unbridge(s, c.id)
+  bridge(s.other, l.other, t.id)
+  const got = await adopt(s.other, l.other)
+  return `<#${t.id}> is now a ${to} channel bridged with #${channels.get(s.other.name + l.other)?.name ?? l.other} (${got.threads} threads, ${got.pins} pins)`
 }
 
 function create(dst: Side, c: any, parent: string | undefined, priv: boolean) {

@@ -19,9 +19,11 @@ Work in either server, for members with Manage Server.
 - `!fluxord mirror 1 3 5-8` mirrors those channels. `all` mirrors everything except 🔒 private channels
 - `!fluxord unmirror 3` stops mirroring. Both channels are kept
 - `!fluxord link 3 <channel id>` bridges channel 3 (or a `#channel` mention, or an id) with any channel on the other side by its id, whatever the names. Copies the topic, pins and threads like `mirror`
+- `!fluxord refresh` edits the bridge's Fluxer messages so old Discord attachment links point at the stable links (needs `attachments`, see below)
+- `!fluxord convert 3 media` (or `forum`) replaces forum or media channel 3 with a new channel of that type, since neither platform changes it in place. The new channel copies the name, category, topic, tags and permissions, and takes over the bridge, re-copying recent threads from the other side. The old channel stays, renamed with `-old`, with its threads
 - `!fluxord help`
 
-Mirroring reuses a channel with the same name, category and privacy on the other side, otherwise it creates one (and its category). It also copies the topic, the pinned messages, and every active or recently archived public thread with its first post. Older thread history stays behind. Private channels are created private, visible only to the bot until you grant roles. Announcement and forum channels fall back to text channels if the other server can't have them.
+Mirroring reuses a channel with the same name, category and privacy on the other side (forum and media channels only match their own type), otherwise it creates one (and its category). It also copies the topic, the pinned messages, and every active or recently archived public thread with its first post. Older thread history stays behind. Private channels are created private, visible only to the bot until you grant roles. Announcement and forum channels fall back to text channels if the other server can't have them.
 
 Bridges live in the database. `bridges` in `config.json` is optional and only adds pairs without copying topic, pins or threads, so prefer `link`. Remove either with `unmirror`.
 
@@ -41,7 +43,7 @@ Discord attachment links expire after about a day, so images bridged to Fluxer w
 "attachments": { "port": 8787, "publicUrl": "https://fluxord.example.com" }
 ```
 
-`publicUrl` must reach `port` from the internet (Fluxer's media proxy refuses private addresses), usually through a reverse proxy with HTTPS. Only attachments from bridged channels are served. Without this block, raw Discord links are used.
+`publicUrl` must reach `port` from the internet (Fluxer's media proxy refuses private addresses), usually through a reverse proxy with HTTPS. Only attachments from bridged channels are served. Without this block, raw Discord links are used. After turning it on, run `!fluxord refresh` to fix messages bridged before.
 
 ## Lifting Fluxer rate limits for the bot
 
@@ -85,7 +87,7 @@ Both ways:
 - [ ] Role pings, `@everyone` and `@here` ping across only when the author has Mention Everyone (or is an admin) in their server. Roles ping the role with the same name on the other side. Messages relayed after downtime never ping
 - [ ] Copied emojis show as real emojis on both sides. Other custom emojis turn into `:name:`, or into an image when the message is only that emoji
 - [ ] Pins, including unpinning bridged copies
-- [ ] Replies: real replies on Fluxer. On Discord, an embed under the message shows `↩️` with the replied person's avatar, name, a snippet and a jump link. Replying to a bridged copy pings the original author natively
+- [ ] Replies: real replies on Fluxer. On Discord, an embed under the message shows `↩️` with the replied person's avatar, name, a snippet and a jump link. Replying to a bridged copy pings the original author natively, unless the reply had its ping turned off
 - [ ] Edits and deletes of the original update the copy
 - [ ] Reactions on an original: unicode and copied emojis as a bot reaction on the copy, other custom emojis appended as `-# :name: 2`
 - [ ] Reactions on a copy: unicode and copied emojis as a bot reaction on the original

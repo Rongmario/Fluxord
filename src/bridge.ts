@@ -402,9 +402,11 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
   const ref = m.message_reference?.type !== 1 && m.referenced_message
   if (ref) {
     // Replying to our copy means the original author lives on the destination, so a real ping works there.
+    // Only when the reply pinged here, which both platforms show by listing the replied author in mentions.
     const r = row(src, ref.id)
     const target = r && row(dst, r.other)
-    const pingable = r?.ours && r.author
+    const pinged = m.mentions?.some((u: any) => (u.id ?? u) === ref.author?.id)
+    const pingable = pinged && r?.ours && r.author
     if (pingable) users.push(r.author)
     const url = target ? dst.jump((await channel(dst, target.channel)).guild_id, target.channel, target.id) : undefined
     const text = convert(ref.content ?? '', ref.mentions, look) || (ref.attachments?.length ? 'attachment' : '')
@@ -510,8 +512,7 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
   // On Discord the reply context can only sit below the text, as the first embed.
   if (context && !reference) embeds.unshift(context)
   if (!content && !embeds.length && !files.length && !stickers.length) content = '-# (unsupported message)'
-  const roles = pings ? [...content.matchAll(/<@&(\d+)>/g)].map(x => x[1]) : []
-  return { content, embeds: embeds.slice(0, 10), files, users, roles, pings, stickers, reference, context }
+  return { content, embeds: embeds.slice(0, 10), files, users, pings, stickers, reference, context }
 }
 
 function preview(text: string, lang: string) {
@@ -551,13 +552,15 @@ async function create(src: Side, m: any) {
     } else l = await mirror(src, c, p)
   }
 
-  const { content, embeds, files, users, roles, pings, stickers, reference, context } = await build(src, m, true, l.hook)
+  const { content, embeds, files, users, pings, stickers, reference, context } = await build(src, m, true, l.hook)
   const body = {
     content,
     embeds,
     username: username(dst, m),
     avatar_url: src.avatar(m.author, m.member, c.guild_id),
-    allowed_mentions: { parse: pings ? ['everyone'] : [], users, roles, replied_user: users.length > 0 },
+
+    // Fluxer rejects parse combined with users or roles lists. Converted content only keeps the mention tokens meant to ping.
+    allowed_mentions: { parse: [...(users.length ? ['users'] : []), ...(pings ? ['everyone', 'roles'] : [])], replied_user: users.length > 0 },
     thread_name: threadName,
     sticker_ids: stickers.length ? stickers : undefined,
     message_reference: reference,
@@ -695,6 +698,36 @@ async function adoptThread(s: Side, t: any) {
 }
 
 // Mirrors pin state onto the other side. Cloning old pinned messages only happens when a channel gets mirrored.
+const CDN = /https:\/\/(?:cdn|media)\.discordapp\.(?:com|net)\/attachments\/\d+\/\d+\/[^\s?)>"|\]]+(?:\?[^\s)>"|\]]*)?/g
+const stable = (text: string) => text.replace(CDN, url => permalink(url))
+
+// Points Discord attachment links in our Fluxer copies at the stable links, for copies made before those existed.
+// Scans the copies themselves, since the msg rows of old messages are pruned.
+export async function relink() {
+  const f = sides.fluxer
+  let edited = 0
+  for (const l of db.query('SELECT * FROM link WHERE side = ?').all('fluxer') as Link[]) {
+    const hook = db.query('SELECT id FROM hook WHERE side = ? AND channel = ?').get('fluxer', l.root) as { id: string } | null
+    if (!hook) continue
+    for (let after = '0'; ; ) {
+      const batch = (await api(f, 'GET', `/channels/${l.channel}/messages?limit=100&after=${after}`)) as any[]
+      for (const m of batch) {
+        if (m.webhook_id !== hook.id) continue
+
+        // Unfurled embeds regenerate from the content, so only our own embeds get sent back.
+        const old = JSON.stringify({ content: m.content ?? '', embeds: (m.embeds ?? []).filter(rich).map(clean) })
+        const now = stable(old)
+        if (now === old) continue
+        await hookCall(f, { id: m.id, channel: l.channel, hook: l.root } as Row, 'PATCH', { ...JSON.parse(now), allowed_mentions: { parse: [] } })
+        edited++
+      }
+      if (batch.length < 100) break
+      after = batch.reduce((a, m) => (BigInt(m.id) > BigInt(a) ? m.id : a), after)
+    }
+  }
+  return edited
+}
+
 async function pins(src: Side, channelId: string, clone: boolean) {
   const l = link(src, channelId)
   if (!l) return 0
