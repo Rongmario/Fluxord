@@ -697,7 +697,6 @@ async function adoptThread(s: Side, t: any) {
   return true
 }
 
-// Mirrors pin state onto the other side. Cloning old pinned messages only happens when a channel gets mirrored.
 const CDN = /https:\/\/(?:cdn|media)\.discordapp\.(?:com|net)\/attachments\/\d+\/\d+\/[^\s?)>"|\]]+(?:\?[^\s)>"|\]]*)?/g
 const stable = (text: string) => text.replace(CDN, url => permalink(url))
 
@@ -708,7 +707,7 @@ export async function relink() {
   let edited = 0
   for (const l of db.query('SELECT * FROM link WHERE side = ?').all('fluxer') as Link[]) {
     const hook = db.query('SELECT id FROM hook WHERE side = ? AND channel = ?').get('fluxer', l.root) as { id: string } | null
-    if (!hook) continue
+    if (!hook || FORUMS.has((await channel(f, l.channel)).type)) continue
     for (let after = '0'; ; ) {
       const batch = (await api(f, 'GET', `/channels/${l.channel}/messages?limit=100&after=${after}`)) as any[]
       for (const m of batch) {
@@ -728,6 +727,7 @@ export async function relink() {
   return edited
 }
 
+// Mirrors pin state onto the other side. Cloning old pinned messages only happens when a channel gets mirrored.
 async function pins(src: Side, channelId: string, clone: boolean) {
   const l = link(src, channelId)
   if (!l) return 0
