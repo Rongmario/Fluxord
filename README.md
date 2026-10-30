@@ -73,7 +73,7 @@ Messages from other webhooks and bots are bridged like anyone else's, with their
 - One row per relayed message (a few integers, no text), pruned after `retentionDaysForMessages`. Pruned messages still exist on both sides, but later edits, deletes and reactions on them stop syncing and replies to them lose the ping and jump link.
 - Permanently failed events (full payload, including text) sit in the `dead` table for `retentionDaysForDeadEvents`.
 - No attachments are uploaded to the Fluxer instance. Discord images arrive as links Fluxer unfurls, other files as `📎` links, text files with a code preview, spoilers hidden.
-- Custom emojis and stickers that belong to the bridged Discord server are copied into the Fluxer guild once, the first time they're used. Emojis and stickers from other Discord servers (Nitro) are never copied. Name clashes are numbered: `wave~1` for stickers, `blob_1` for emojis (Fluxer emoji names can't contain `~`).
+- Custom emojis and stickers that belong to the bridged Discord server are copied into the Fluxer guild once, the first time they're used. Fluxer custom emojis, from any community on your instance, are copied into the Discord bot's own application emojis (up to 2000, free, usable only by the bot), unless the Discord server has an emoji with the same name. Emojis and stickers from other Discord servers (Nitro) are never copied. Name clashes are numbered: `wave~1` for stickers, `blob_1` for emojis (Fluxer emoji names can't contain `~`).
 
 ## What syncs
 
@@ -99,7 +99,8 @@ One way only:
 - [ ] Fluxer to Discord: Fluxer messages over 2000 characters go into an embed on Discord
 - [ ] Discord to Fluxer: stickers from the bridged server are sent as real Fluxer stickers. Others show as image embeds, and Discord's built-in animated stickers (Lottie format) show as text
 - [ ] Fluxer to Discord: stickers show as image embeds, since Discord webhooks can't send stickers. Copies of Discord stickers, or ones sharing a Discord sticker's name, use Discord's own image
-- [ ] Discord to Fluxer: new emojis and stickers get copied. Fluxer-only emojis never get copied to Discord
+- [ ] Discord to Fluxer: new emojis and stickers get copied
+- [ ] Fluxer to Discord: Fluxer emojis get copied as application emojis, so they show inline and as bot reactions. Discord members can't use them
 - [ ] Fluxer to Discord: `:name:` (typed or a Fluxer emoji) becomes the Discord server's emoji with that name
 
 Not synced either way:

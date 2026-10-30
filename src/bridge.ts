@@ -16,7 +16,7 @@ export interface Side {
   other: Side
   avatar(user: any, member: any, guildId?: string): string | undefined
   sticker(sticker: any): string | undefined
-  emoji?(id: string, animated: boolean): string
+  emoji(id: string, animated: boolean): string
   jump(guildId: string, channelId: string, messageId: string): string
 }
 
@@ -253,7 +253,7 @@ const lookup = (s: Side): Look => ({
     return l ? `<#${l.other}>` : `#${channels.get(s.name + id)?.name ?? 'unknown-channel'}`
   },
   role: id => roles.get(s.name + id),
-  emoji: id => mapped(s, id),
+  emoji: (id, name) => (s.name === 'fluxer' && serverEmoji(id, name)?.id) || mapped(s, id),
 
   // Fluxer text like :name: becomes the Discord server's emoji of that name.
   named: name => {
@@ -270,34 +270,45 @@ const mapped = (s: Side, id: string) =>
     } | null
   )?.v
 
-// Uploads a Discord emoji or sticker to the Fluxer guild once. Failures (guild full, bad image) fall back to text for this run.
-async function copy(kind: 'emojis' | 'stickers', id: string, name: string, url: string, fluxerRoot: string) {
-  const saved = mapped(sides.discord, id)
+// Copies once: Discord emojis and stickers into the Fluxer guild, Fluxer emojis into the Discord app's own emojis.
+// Failures (guild full, bad image) fall back to text for this run.
+async function copy(src: Side, kind: 'emojis' | 'stickers', id: string, name: string, url: string, dstRoot: string) {
+  const dst = src.other
+  const saved = mapped(src, id)
   if (saved || failed.has(id)) return saved
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(60_000) })
     if (!res.ok) throw new HttpError(res.status, url)
     const image = `data:${res.headers.get('content-type')};base64,${Buffer.from(await res.arrayBuffer()).toString('base64')}`
-    const path = `/guilds/${(await channel(sides.fluxer, fluxerRoot)).guild_id}/${kind}`
+    const path = dst.name === 'fluxer' ? `/guilds/${(await channel(dst, dstRoot)).guild_id}/${kind}` : `/applications/${dst.self}/emojis`
 
     // Number duplicates like Discord does. Fluxer emoji names reject '~', so emojis use '_'.
-    const taken = new Set(((await api(sides.fluxer, 'GET', path)) as any[]).map(e => e.name))
+    const list = await api(dst, 'GET', path)
+    const taken = new Set(((list.items ?? list) as any[]).map(e => e.name))
     const [sep, max] = kind === 'emojis' ? ['_', 32] : ['~', 30]
     let unique = name
     for (let n = 1; taken.has(unique); n++) unique = name.slice(0, max - `${sep}${n}`.length) + `${sep}${n}`
-    const out = await api(sides.fluxer, 'POST', path, { name: unique, image })
-    db.query('INSERT INTO expr VALUES (?, ?)').run(id, out.id)
+    const out = await api(dst, 'POST', path, { name: unique, image })
+    db.query('INSERT INTO expr VALUES (?, ?)').run(...(src.name === 'discord' ? [id, out.id] : [out.id, id]))
     return out.id as string
   } catch (e) {
     if (transient(e)) throw e
     failed.add(id)
-    console.error(`Couldn't copy ${kind} ${name} to Fluxer:`, e)
+    console.error(`Couldn't copy ${kind} ${name} to ${label(dst)}:`, e)
   }
 }
 
 async function emojiTo(src: Side, id: string, name: string, animated: boolean, srcGuild: string, dstRoot: string) {
-  if (src.name === 'fluxer' || expressions.get(id) !== srcGuild) return mapped(src, id)
-  return copy('emojis', id, name, src.emoji!(id, animated), dstRoot)
+  if (src.name === 'discord') return expressions.get(id) === srcGuild ? copy(src, 'emojis', id, name, src.emoji(id, animated), dstRoot) : mapped(src, id)
+
+  // Every Fluxer emoji lives on your own instance, so any can be copied, but the Discord server's own emoji comes first.
+  return serverEmoji(id, name)?.id ?? copy(src, 'emojis', id, name, src.emoji(id, animated), dstRoot)
+}
+
+// The Discord server emoji a Fluxer emoji stands for: the one it was copied from, else one sharing its name.
+function serverEmoji(id: string, name: string) {
+  const to = mapped(sides.fluxer, id)
+  return [...serverEmojis.values()].find(e => e.id === to) ?? serverEmojis.get(name)
 }
 
 async function webhook(s: Side, channelId: string): Promise<{ id: string; token: string }> {
@@ -400,7 +411,7 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
 
   // A lone emoji that didn't resolve on the other side shows as its image, like it would on its own platform.
   const lone = m.content?.trim().match(/^<(a?):([\w-]+):(\d+)>$/)
-  if (lone && text.trim() === `:${lone[2]}:`) embeds.push({ image: { url: src.emoji!(lone[3], !!lone[1]) } })
+  if (lone && text.trim() === `:${lone[2]}:`) embeds.push({ image: { url: src.emoji(lone[3], !!lone[1]) } })
   else if (text) lines.push(text)
 
   const attachments = [...(m.attachments ?? [])]
@@ -470,7 +481,7 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
     const copyOf = src.name === 'fluxer' && mapped(src, s.id)
     const own = src.name === 'fluxer' && ([...serverStickers.values()].find(x => x.id === copyOf) ?? serverStickers.get(s.name))
     const url = (own && dst.sticker(own)) || src.sticker(s)
-    const copied = url && src.name === 'discord' && expressions.get(s.id) === guild && (await copy('stickers', s.id, s.name, url, dstRoot))
+    const copied = url && src.name === 'discord' && expressions.get(s.id) === guild && (await copy(src, 'stickers', s.id, s.name, url, dstRoot))
     if (copied) stickers.push(copied)
     else embeds.push(url ? { image: { url } } : { description: `Sticker: ${s.name}` })
   }
@@ -602,26 +613,28 @@ async function react(src: Side, channelId: string, messageId: string) {
   // Our own reactions mirror the other side, so leave them out of the count.
   const want: any[] = (m.reactions ?? []).map((x: any) => ({ ...x.emoji, count: x.count - (x.me ? 1 : 0) })).filter((x: any) => x.count > 0)
   const key = (e: any) => (e.id ? `${e.name}:${e.id}` : e.name)
-  const mine: string[] = (target.reactions ?? []).filter((x: any) => x.me).map((x: any) => key(x.emoji))
+
+  // Compared by id, since copies can carry a different name.
+  const mine = new Map<string, string>((target.reactions ?? []).filter((x: any) => x.me).map((x: any) => [x.emoji.id ?? x.emoji.name, key(x.emoji)]))
   const path = (k: string) => `/channels/${copy.channel}/messages/${copy.id}/reactions/${encodeURIComponent(k)}/@me`
 
   // Custom emoji react only when copied across. The rest, and unicode the destination rejects, get appended as text.
   const guild = (await channel(src, channelId)).guild_id
-  const keys = new Map<string, any>()
+  const keys = new Map<string, { k: string; e: any }>()
   const appended: any[] = []
   for (const e of want) {
     const to = e.id ? await emojiTo(src, e.id, e.name, !!e.animated, guild, copy.hook) : e.name
-    if (to) keys.set(e.id ? `${e.name}:${to}` : to, e)
+    if (to) keys.set(to, { k: e.id ? `${e.name}:${to}` : to, e })
     else appended.push(e)
   }
-  for (const [k, e] of keys) {
-    if (mine.includes(k)) continue
+  for (const [id, { k, e }] of keys) {
+    if (mine.has(id)) continue
     await api(dst, 'PUT', path(k)).catch(err => {
       if (!(err instanceof HttpError) || err.status >= 500) throw err
       appended.push(e)
     })
   }
-  for (const k of mine) if (!keys.has(k)) await api(dst, 'DELETE', path(k))
+  for (const [id, k] of mine) if (!keys.has(id)) await api(dst, 'DELETE', path(k))
 
   if (!copy.ours) return
   const line = reactsLine(appended)

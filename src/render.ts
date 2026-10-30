@@ -1,4 +1,4 @@
-export type Look = { channel(id: string): string; role(id: string): string | undefined; emoji(id: string): string | undefined; named(name: string): string | undefined }
+export type Look = { channel(id: string): string; role(id: string): string | undefined; emoji(id: string, name: string): string | undefined; named(name: string): string | undefined }
 
 export const displayName = (user: any, member?: any): string => member?.nick || user?.global_name || user?.username || 'Unknown'
 
@@ -6,7 +6,7 @@ export const displayName = (user: any, member?: any): string => member?.nick || 
 export function convert(content: string, mentions: any[] = [], look: Look): string {
   return content
     .replace(/<(a?):([\w-]+):(\d+)>/g, (_, a, name, id) => {
-      const to = look.emoji(id)
+      const to = look.emoji(id, name)
       return to ? `<${a}:${name}:${to}>` : `:${name}:`
     })
     .replace(/<@!?(\d+)>/g, (_, id) => {
