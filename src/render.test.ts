@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { convert, join, reactsLine, replyLine } from './render'
+import { convert, join, reactsLine, snippet } from './render'
 
 const look = { channel: (id: string) => (id === '7' ? '<#70>' : '#general'), role: (id: string) => (id === '5' ? 'Mods' : undefined), emoji: (id: string) => (id === '9' ? '99' : undefined), named: (name: string) => (name === 'wave' ? '<:wave:5>' : undefined) }
 
@@ -14,10 +14,9 @@ test('convert maps raw and unmapped :name: to server emoji', () => {
   expect(convert(':wave: :nope: <:wave:1> <a:wave:2> 12:30:45', [], look)).toBe('<:wave:5> :nope: <:wave:5> <:wave:5> 12:30:45')
 })
 
-test('replyLine collapses and truncates', () => {
-  expect(replyLine('**@A**', 'line one\n\n[two]', 'https://x/1')).toBe('> ↪ **@A** [line one two](https://x/1)')
-  expect(replyLine('<@1>', '')).toBe('> ↪ <@1> (no text)')
-  expect(replyLine('p', 'a'.repeat(100)).length).toBe('> ↪ p '.length + 80)
+test('snippet collapses and truncates', () => {
+  expect(snippet('line one\n\n  two')).toBe('line one two')
+  expect(snippet('a'.repeat(150)).length).toBe(100)
 })
 
 test('reactsLine and join', () => {

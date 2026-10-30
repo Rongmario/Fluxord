@@ -11,7 +11,6 @@ const VIEW = 1n << 10n
 const BOT_ALLOW = VIEW | (1n << 11n) | (1n << 6n) | (1n << 16n) | (1n << 29n)
 
 const HELP = [
-  '**Fluxord** (needs Manage Server)',
   "`!fluxord channels` lists this server's channels with numbers",
   '`!fluxord mirror 1 3 5-8` mirrors those channels to the other side. `all` mirrors every channel except 🔒 private ones',
   '`!fluxord unmirror 3` stops mirroring. Both channels are kept',
@@ -22,20 +21,20 @@ const hidden = (c: any, guild: string) => !!c.permission_overwrites?.some((o: an
 
 export async function command(s: Side, m: any) {
   if (m.guild_id !== s.server || m.author?.bot) return
-  const say = (lines: string[]) => reply(s, m.channel_id, lines)
-  if (!admin(s, m)) return say(['Only members with Manage Server can use Fluxord commands.'])
+  const say = (title: string, lines: string[], footer?: string) => reply(s, m.channel_id, title, lines, footer)
+  if (!admin(s, m)) return say('Not allowed', ['Only members with Manage Server can use Fluxord commands.'])
 
   const [, sub, ...args] = m.content.trim().toLowerCase().split(/\s+/)
-  if (sub === 'help') return say(HELP)
+  if (sub === 'help') return say('Fluxord', HELP, 'Needs Manage Server')
   const { list, cats } = await scrape(s)
-  if (sub === 'channels') return say(list.length ? overview(s, list, cats) : ['No channels found.'])
+  if (sub === 'channels') return say('Channels', list.length ? overview(s, list, cats) : ['No channels found.'], 'Mirror with !fluxord mirror <numbers>')
 
   const all = args[0] === 'all'
   const picks = all ? list.filter(c => (sub === 'mirror' ? !hidden(c, s.server) : link(s, c.id))) : select(args, list)
-  if (!picks.length) return say(['Nothing selected.', ...HELP])
-  if (sub === 'mirror') return say(await mirror(s, picks, cats))
+  if (!picks.length) return say('Nothing selected', HELP)
+  if (sub === 'mirror') return say('Mirrored', await mirror(s, picks, cats))
   for (const c of picks) unbridge(s, c.id)
-  return say(picks.map(c => `<#${c.id}> is no longer mirrored`))
+  return say('Stopped mirroring', picks.map(c => `<#${c.id}>`), 'Both channels are kept')
 }
 
 // Sidebar order, so numbers stay the same between listing and mirroring.
@@ -141,15 +140,20 @@ function create(dst: Side, c: any, parent: string | undefined, priv: boolean) {
   })
 }
 
-async function reply(s: Side, channel: string, lines: string[]) {
-  const send = (content: string) => api(s, 'POST', `/channels/${channel}/messages`, { content, allowed_mentions: { parse: [] } })
-  let buf = ''
+// One embed per message, since Discord caps a message's embeds at 6000 characters in total.
+async function reply(s: Side, channel: string, title: string, lines: string[], footer?: string) {
+  const parts = ['']
   for (const line of lines) {
-    if (buf && buf.length + line.length + 1 > s.maxContent) {
-      await send(buf)
-      buf = ''
-    }
-    buf = join(buf, line)
+    if (parts.at(-1)!.length + line.length + 1 > 4000) parts.push('')
+    parts[parts.length - 1] = join(parts.at(-1)!, line)
   }
-  if (buf) await send(buf)
+  for (const [i, description] of parts.entries()) {
+    const embed = {
+      color: s.color,
+      title: i ? undefined : title,
+      description,
+      footer: footer && i === parts.length - 1 ? { text: footer } : undefined,
+    }
+    await api(s, 'POST', `/channels/${channel}/messages`, { embeds: [embed], allowed_mentions: { parse: [] } })
+  }
 }

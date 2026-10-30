@@ -18,11 +18,9 @@ export function convert(content: string, mentions: any[] = [], look: Look): stri
     .replace(/(?<![<\w]):(\w{2,32}):(?!\d)/g, (raw, name) => look.named(name) ?? raw)
 }
 
-export function replyLine(ping: string, text: string, link?: string): string {
-  let s = text.replace(/\s+/g, ' ').replace(/[[\]`]/g, '').trim()
-  if (s.length > 80) s = s.slice(0, 79) + '…'
-  s ||= '(no text)'
-  return `> ↪ ${ping} ${link ? `[${s}](${link})` : s}`
+export function snippet(text: string) {
+  const s = text.replace(/\s+/g, ' ').trim()
+  return s.length > 100 ? s.slice(0, 99) + '…' : s
 }
 
 export const reactsLine = (emojis: { name: string; id?: string; count: number }[]) =>

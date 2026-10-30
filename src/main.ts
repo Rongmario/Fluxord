@@ -15,6 +15,7 @@ const discord: Side = {
   maxUpload: 10 * 1024 * 1024,
   self: '',
   server: cfg.servers.discord,
+  color: cfg.colors?.discord ?? 0x5865f2,
   other: null!,
   avatar: (u, m, g) =>
     m?.avatar
@@ -37,6 +38,7 @@ const fluxer: Side = {
   maxUpload: 0,
   self: '',
   server: cfg.servers.fluxer,
+  color: cfg.colors?.fluxer ?? 0x1d9e75,
   other: discord,
   avatar: (u, m, g) =>
     m?.avatar ? `${fx.media}/guilds/${g}/users/${u.id}/avatars/${m.avatar}.png` : u.avatar ? `${fx.media}/avatars/${u.id}/${u.avatar}.png` : undefined,

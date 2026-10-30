@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite'
 import { HttpError, rest, sleep, type FileUp } from './net'
 import { permalink } from './attachments'
 import { COMMAND, command } from './commands'
-import { convert, displayName, join, reactsLine, replyLine, type Look } from './render'
+import { convert, displayName, join, reactsLine, snippet, type Look } from './render'
 
 export interface Side {
   name: 'discord' | 'fluxer'
@@ -12,6 +12,7 @@ export interface Side {
   maxUpload: number
   self: string
   server: string
+  color: number
   other: Side
   avatar(user: any, member: any, guildId?: string): string | undefined
   sticker(sticker: any): string | undefined
@@ -314,7 +315,9 @@ async function execute(dst: Side, l: Link, body: unknown, files: FileUp[], retry
   try {
     return await rest(`${dst.api}/webhooks/${h.id}/${h.token}?wait=true${thread}`, undefined, 'POST', body, files)
   } catch (e) {
-    if (!(retry && e instanceof HttpError && e.status === 404)) throw e
+    // A 404 means the webhook was deleted, unless it's about a missing reply target.
+    const gone = e instanceof HttpError && e.status === 404 && ![10008, 'UNKNOWN_MESSAGE'].includes((e.body as any)?.code)
+    if (!(retry && gone)) throw e
 
     // Webhook was deleted by someone, make a new one.
     db.query('DELETE FROM hook WHERE side = ? AND channel = ?').run(dst.name, l.hook)
@@ -366,30 +369,47 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
   const files: FileUp[] = []
   const users: string[] = []
 
+  const guild = (await channel(src, m.channel_id)).guild_id
+  let mention = ''
+  let context: any
+  let reference: any
   const ref = m.message_reference?.type !== 1 && m.referenced_message
   if (ref) {
     // Replying to our copy means the original author lives on the destination, so a real ping works there.
     const r = row(src, ref.id)
-    let ping = `**@${displayName(ref.author, ref.member)}**`
-    if (r?.ours && r.author) {
-      ping = `<@${r.author}>`
-      users.push(r.author)
-    }
     const target = r && row(dst, r.other)
+    const pingable = r?.ours && r.author
+    if (pingable) users.push(r.author)
     const url = target ? dst.jump((await channel(dst, target.channel)).guild_id, target.channel, target.id) : undefined
     const text = convert(ref.content ?? '', ref.mentions, look) || (ref.attachments?.length ? 'attachment' : '')
-    lines.push(replyLine(ping, text, url))
-  } else if (m.type === 19 && m.referenced_message === null) lines.push('> ↪ *original message was deleted*')
+    context = {
+      color: src.color,
+      author: { name: `↩️ ${displayName(ref.author, ref.member)}`, icon_url: src.avatar(ref.author, ref.member, guild), url },
+      description: snippet(text) || undefined,
+    }
 
-  const guild = (await channel(src, m.channel_id)).guild_id
+    // Fluxer webhooks take real replies, which show the avatar and name natively. Discord ones can't.
+    if (dst.name === 'fluxer' && target) reference = { message_id: target.id, channel_id: target.channel }
+    else if (pingable) mention = `<@${r.author}>`
+
+    // Fluxer shows a deleted reply target natively.
+  } else if (dst.name === 'discord' && m.type === 19 && m.referenced_message === null) context = { color: src.color, author: { name: '↩️ Original message was deleted' } }
+
   for (const [, a, name, id] of (m.content ?? '').matchAll(/<(a?):([\w-]+):(\d+)>/g)) await emojiTo(src, id, name, !!a, guild, dstRoot)
   if (m.content) lines.push(convert(m.content, m.mentions, look))
 
   const attachments = [...(m.attachments ?? [])]
   const sourceEmbeds = [...(m.embeds ?? [])]
+  const from = channels.get(src.name + m.message_reference?.channel_id)?.name
   for (const { message: f } of m.message_snapshots ?? []) {
-    lines.push('-# ↱ Forwarded')
-    if (f.content) lines.push(convert(f.content, f.mentions, look).replace(/^/gm, '> '))
+    // Snapshots carry no author, only where they came from.
+    embeds.push({
+      color: src.color,
+      author: { name: '↱ Forwarded' },
+      description: convert(f.content ?? '', f.mentions, look) || undefined,
+      footer: from && { text: `#${from}` },
+      timestamp: f.timestamp,
+    })
     attachments.push(...(f.attachments ?? []))
     sourceEmbeds.push(...(f.embeds ?? []))
   }
@@ -416,14 +436,25 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
       continue
     }
 
-    // Images go in as bare links so the destination unfurls them like any pasted image.
     const url = src.name === 'discord' ? permalink(a.url) : a.url
-    const shown = a.content_type?.startsWith('image/') ? url : `📎 [${a.filename.replace(/[[\]]/g, '')}](${url})`
-    lines.push(spoiler ? `||${shown}||` : shown)
     if (!spoiler && TEXT.test(a.filename) && a.size <= 512 * 1024) {
       const res = await fetch(a.url, { signal: AbortSignal.timeout(60_000) })
-      if (res.ok) lines.push(preview(await res.text(), a.filename.split('.').pop().toLowerCase()))
+      if (res.ok) {
+        const text = await res.text()
+        embeds.push({
+          color: src.color,
+          title: a.filename,
+          url,
+          description: preview(text, a.filename.split('.').pop().toLowerCase()),
+          footer: { text: `${a.size < 1024 ? `${a.size} B` : `${(a.size / 1024).toFixed(1)} KB`} · ${text.split('\n').length} lines` },
+        })
+        continue
+      }
     }
+
+    // Images go in as bare links so the destination unfurls them like any pasted image.
+    const shown = a.content_type?.startsWith('image/') ? url : `📎 [${a.filename.replace(/[[\]]/g, '')}](${url})`
+    lines.push(spoiler ? `||${shown}||` : shown)
   }
 
   embeds.push(...sourceEmbeds.filter(rich).map(clean))
@@ -436,16 +467,19 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
     const url = (own && dst.sticker(own)) || src.sticker(s)
     const copied = url && src.name === 'discord' && expressions.get(s.id) === guild && (await copy('stickers', s.id, s.name, url, dstRoot))
     if (copied) stickers.push(copied)
-    else embeds.push(url ? { title: s.name, image: { url } } : { description: `Sticker: ${s.name}` })
+    else embeds.push(url ? { image: { url }, footer: { text: s.name } } : { description: `Sticker: ${s.name}` })
   }
 
-  let content = lines.join('\n')
+  let content = [mention, lines.join('\n')].filter(Boolean).join(' ')
   if (content.length > dst.maxContent) {
-    embeds.unshift({ description: content.slice(0, 4096) })
+    embeds.unshift({ color: src.color, description: content.slice(0, 4096), footer: { text: `Too long for ${label(dst)}, shown in full here` } })
     content = ''
   }
+
+  // On Discord the reply context can only sit below the text, as the first embed.
+  if (context && !reference) embeds.unshift(context)
   if (!content && !embeds.length && !files.length && !stickers.length) content = '-# (unsupported message)'
-  return { content, embeds: embeds.slice(0, 10), files, users, stickers }
+  return { content, embeds: embeds.slice(0, 10), files, users, stickers, reference, context }
 }
 
 function preview(text: string, lang: string) {
@@ -453,9 +487,11 @@ function preview(text: string, lang: string) {
   return '```' + lang + '\n' + text.replaceAll('```', '`\u200b``') + '\n```'
 }
 
+const label = (s: Side) => (s.name === 'fluxer' ? 'Fluxer' : 'Discord')
+
 // The platform tag stops people passing as someone on the other side.
 function username(dst: Side, m: any) {
-  const tag = ` (${dst.other.name === 'fluxer' ? 'Fluxer' : 'Discord'})`
+  const tag = ` (${label(dst.other)})`
   const name = displayName(m.author, m.member).slice(0, 80 - tag.length)
 
   // Discord rejects webhook names containing these words.
@@ -483,21 +519,24 @@ async function create(src: Side, m: any) {
     } else l = await mirror(src, c, p)
   }
 
-  const { content, embeds, files, users, stickers } = await build(src, m, true, l.hook)
-  const out = await execute(
-    dst,
-    l,
-    {
-      content,
-      embeds,
-      username: username(dst, m),
-      avatar_url: src.avatar(m.author, m.member, c.guild_id),
-      allowed_mentions: { parse: [], users },
-      thread_name: threadName,
-      sticker_ids: stickers.length ? stickers : undefined,
-    },
-    files,
-  )
+  const { content, embeds, files, users, stickers, reference, context } = await build(src, m, true, l.hook)
+  const body = {
+    content,
+    embeds,
+    username: username(dst, m),
+    avatar_url: src.avatar(m.author, m.member, c.guild_id),
+    allowed_mentions: { parse: [], users, replied_user: users.length > 0 },
+    thread_name: threadName,
+    sticker_ids: stickers.length ? stickers : undefined,
+    message_reference: reference,
+  }
+
+  // A reply target that vanished since we looked it up would fail the whole message, so retry with the embed.
+  const to = l
+  const out = await execute(dst, to, body, files).catch(e => {
+    if (!reference || !(e instanceof HttpError) || e.status >= 500) throw e
+    return execute(dst, to, { ...body, message_reference: undefined, embeds: [context, ...embeds].slice(0, 10) }, files)
+  })
   if (threadName) l = pair(src, c.id, out.channel_id, p!)
 
   const reply = m.message_reference?.type !== 1 ? (m.message_reference?.message_id ?? null) : null
@@ -596,7 +635,7 @@ export async function adopt(s: Side, channelId: string) {
   const c = await channel(s, channelId)
   const theirs = await channel(dst, l.other)
   if (c.topic && !theirs.topic) await api(dst, 'PATCH', `/channels/${l.other}`, { topic: c.topic })
-  const pinned = await pins(s, channelId, true)
+  const pinned = FORUMS.has(c.type) ? 0 : await pins(s, channelId, true)
 
   const active = await api(s, 'GET', `/guilds/${c.guild_id}/threads/active`)
   const archived = await api(s, 'GET', `/channels/${channelId}/threads/archived/public?limit=100`)
@@ -650,8 +689,9 @@ async function backfill(s: Side) {
   const guilds = new Set<string>()
   for (const l of roots) {
     await (async () => {
-      guilds.add((await channel(s, l.channel)).guild_id)
-      await history(s, l.channel, last(s, l.channel) ?? l.since)
+      const c = await channel(s, l.channel)
+      guilds.add(c.guild_id)
+      if (!FORUMS.has(c.type)) await history(s, l.channel, last(s, l.channel) ?? l.since)
     })().catch(tolerate(s, 'BACKFILL', l))
   }
 

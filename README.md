@@ -24,6 +24,14 @@ Mirroring reuses a channel with the same name, category and privacy on the other
 
 Bridges live in the database. `bridges` in `config.json` is optional and only adds pairs, so remove them with `unmirror`.
 
+## Embed colors
+
+Embeds take the color of the platform the content came from. Override them in `config.json`:
+
+```json
+"colors": { "discord": 5793266, "fluxer": 1940085 }
+```
+
 ## Discord attachment links
 
 Discord attachment links expire after about a day, so images bridged to Fluxer would go blank. To keep them alive, let the bridge serve stable links that fetch a fresh Discord link on each visit:
@@ -75,7 +83,7 @@ Both ways:
 - [ ] Mentions turn into plain `**@name**`. Mentions of bridged channels become native channel mentions
 - [ ] Copied emojis show as real emojis on both sides. Other custom emojis turn into `:name:`
 - [ ] Pins, including unpinning bridged copies
-- [ ] Replies as a quote line with a jump link. Replying to a bridged copy pings the original author natively, otherwise a bold `@name` stands in
+- [ ] Replies: real replies on Fluxer. On Discord, an embed under the message shows `↩️` with the replied person's avatar, name, a snippet and a jump link. Replying to a bridged copy pings the original author natively
 - [ ] Edits and deletes of the original update the copy
 - [ ] Reactions on an original: unicode and copied emojis as a bot reaction on the copy, other custom emojis appended as `-# :name: 2`
 - [ ] Reactions on a copy: unicode and copied emojis as a bot reaction on the original
