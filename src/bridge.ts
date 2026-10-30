@@ -164,8 +164,9 @@ function push(s: Side, type: string, data: unknown) {
   kick()
 }
 
+// Bun reports network failures (refused, reset, DNS) as a TypeError with a code. Other coded errors, like SQLite's, are permanent.
 export const transient = (e: any) =>
-  e instanceof HttpError ? e.status >= 500 || e.status === 401 : typeof e?.code === 'string' || e?.name === 'TimeoutError'
+  e instanceof HttpError ? e.status >= 500 || e.status === 401 : (typeof e?.code === 'string' && e instanceof TypeError) || e?.name === 'TimeoutError'
 
 // Permanent failures go to the dead table so they can be inspected and replayed. Transient ones propagate for retry.
 const tolerate = (s: Side, type: string, data: unknown) => (e: unknown) => {
