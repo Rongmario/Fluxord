@@ -499,7 +499,11 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
     const own = src.name === 'fluxer' && ([...serverStickers.values()].find(x => x.id === copyOf) ?? serverStickers.get(s.name))
     const url = (own && dst.sticker(own)) || src.sticker(s)
     const copied = url && src.name === 'discord' && expressions.get(s.id) === guild && (await copy(src, 'stickers', s.id, s.name, url, dstRoot))
+
+    // Discord can't size Fluxer's WebP stickers in an embed and shows it broken, so they go up as files.
+    const res = url && !copied && !own && src.name === 'fluxer' && withFiles && (await fetch(url, { signal: AbortSignal.timeout(60_000) }).catch(() => null))
     if (copied) stickers.push(copied)
+    else if (res && res.ok) files.push({ name: `${s.name.replace(/\W+/g, '_')}.webp`, data: await res.blob() })
     else embeds.push(url ? { image: { url } } : { description: `Sticker: ${s.name}` })
   }
 
