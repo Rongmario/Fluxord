@@ -2,7 +2,7 @@ import { adopt, admin, api, bridge, channels, link, transient, unbridge, type Si
 import { HttpError } from './net'
 import { join } from './render'
 
-export const COMMAND = /^!fluxord\s+(help|channels|mirror|unmirror)\b/i
+export const COMMAND = /^!fluxord\s+(help|channels|mirror|unmirror|link)\b/i
 
 const MIRRORABLE = new Set([0, 5, 15, 16])
 const VIEW = 1n << 10n
@@ -14,6 +14,7 @@ const HELP = [
   "`!fluxord channels` lists this server's channels with numbers",
   '`!fluxord mirror 1 3 5-8` mirrors those channels to the other side. `all` mirrors every channel except 🔒 private ones',
   '`!fluxord unmirror 3` stops mirroring. Both channels are kept',
+  '`!fluxord link 3 <channel id>` bridges channel 3 (or a #channel) with any channel on the other side, whatever its name',
 ]
 
 const norm = (name: string) => name.toLowerCase().replace(/\s+/g, '-')
@@ -28,6 +29,11 @@ export async function command(s: Side, m: any) {
   if (sub === 'help') return say('Fluxord', HELP, 'Needs Manage Server')
   const { list, cats } = await scrape(s)
   if (sub === 'channels') return say('Channels', list.length ? overview(s, list, cats) : ['No channels found.'], 'Mirror with !fluxord mirror <numbers>')
+
+  if (sub === 'link') {
+    const out = await pair(s, args, list)
+    return out ? say('Linked', [out]) : say("Couldn't link", HELP.slice(-1))
+  }
 
   const all = args[0] === 'all'
   const picks = all ? list.filter(c => (sub === 'mirror' ? !hidden(c, s.server) : link(s, c.id))) : select(args, list)
@@ -116,6 +122,28 @@ async function mirror(s: Side, picks: any[], cats: Map<string, any>) {
     }
   }
   return out
+}
+
+// Any two channels, by number, #channel or id here and by id on the other side.
+async function pair(s: Side, [mine, theirs]: string[], list: any[]) {
+  const dst = s.other
+  const c = list.find(x => x.id === mine?.replace(/[<#>]/g, '')) ?? list[Number(mine) - 1]
+  const t =
+    /^\d+$/.test(theirs ?? '') &&
+    (await api(dst, 'GET', `/channels/${theirs}`).catch(e => {
+      if (transient(e)) throw e
+    }))
+  if (!c || !t || t.guild_id !== dst.server || !MIRRORABLE.has(t.type)) return
+  if (link(s, c.id) || link(dst, t.id)) return `<#${c.id}> or #${t.name} is already mirrored`
+  try {
+    channels.set(dst.name + t.id, t)
+    bridge(s, c.id, t.id)
+    const got = await adopt(s, c.id)
+    return `<#${c.id}> ⇄ #${t.name} (${got.threads} threads, ${got.pins} pins)`
+  } catch (e) {
+    if (transient(e)) throw e
+    return `<#${c.id}> failed: ${e instanceof HttpError ? JSON.stringify(e.body) : e}`
+  }
 }
 
 function create(dst: Side, c: any, parent: string | undefined, priv: boolean) {

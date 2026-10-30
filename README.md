@@ -18,11 +18,12 @@ Work in either server, for members with Manage Server.
 - `!fluxord channels` lists every text, announcement and forum channel with a number and its mirror status
 - `!fluxord mirror 1 3 5-8` mirrors those channels. `all` mirrors everything except 🔒 private channels
 - `!fluxord unmirror 3` stops mirroring. Both channels are kept
+- `!fluxord link 3 <channel id>` bridges channel 3 (or a `#channel` mention, or an id) with any channel on the other side by its id, whatever the names. Copies the topic, pins and threads like `mirror`
 - `!fluxord help`
 
 Mirroring reuses a channel with the same name, category and privacy on the other side, otherwise it creates one (and its category). It also copies the topic, the pinned messages, and every active or recently archived public thread with its first post. Older thread history stays behind. Private channels are created private, visible only to the bot until you grant roles. Announcement and forum channels fall back to text channels if the other server can't have them.
 
-Bridges live in the database. `bridges` in `config.json` is optional and only adds pairs, so remove them with `unmirror`.
+Bridges live in the database. `bridges` in `config.json` is optional and only adds pairs without copying topic, pins or threads, so prefer `link`. Remove either with `unmirror`.
 
 ## Embed colors
 
