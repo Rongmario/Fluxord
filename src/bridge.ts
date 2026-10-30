@@ -511,6 +511,10 @@ async function build(src: Side, m: any, withFiles: boolean, dstRoot: string) {
 
   // On Discord the reply context can only sit below the text, as the first embed.
   if (context && !reference) embeds.unshift(context)
+
+  // Fluxer's client only draws the thumbnail of an embed without text, so an image alone renders as blank space.
+  if (dst.name === 'fluxer')
+    for (const e of embeds) if (e.image && !(e.title != null || e.description || e.author || e.footer || e.fields?.length || e.provider)) [e.thumbnail, e.image] = [e.image, undefined]
   if (!content && !embeds.length && !files.length && !stickers.length) content = '-# (unsupported message)'
   return { content, embeds: embeds.slice(0, 10), files, users, pings, stickers, reference, context }
 }
